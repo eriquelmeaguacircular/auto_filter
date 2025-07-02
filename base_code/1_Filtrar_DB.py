@@ -27,21 +27,20 @@ def cargar_datos(ruta_archivo: str, log_queue: queue.Queue) -> pd.DataFrame | No
         df.columns = df.columns.str.strip()
         log_queue.put("✅ Datos cargados exitosamente.")
         
-        # --- NUEVA LÓGICA DE LIMPIEZA DE DATOS ---
         # Limpia espacios en columnas de texto clave.
         if COL_EXPEDIENTE in df.columns:
             df[COL_EXPEDIENTE] = df[COL_EXPEDIENTE].astype(str).str.strip()
-        if 'N° \nSolicitud' in df.columns: # Asumiendo el nombre de la columna de solicitud
+        if 'N° \nSolicitud' in df.columns:
             df['N° \nSolicitud'] = df['N° \nSolicitud'].astype(str).str.strip()
             
         # Limpia y estandariza mayúsculas/minúsculas en Nombre Solicitante.
         if COL_SOLICITANTE in df.columns:
             log_queue.put("   - Estandarizando nombres de solicitantes...")
-            # .str.title() convierte 'JUAN PEREZ' en 'Juan Perez'
             df[COL_SOLICITANTE] = df[COL_SOLICITANTE].astype(str).str.strip().str.title()
-            # Reemplazar 'Nan' que resulta de celdas vacías
-            df[COL_SOLICITANTE].replace('Nan', '', inplace=True)
-        # --- FIN DE LA NUEVA LÓGICA ---
+            
+            # --- LÍNEA CORREGIDA ---
+            # Se reasigna el resultado a la columna en lugar de usar 'inplace=True'.
+            df[COL_SOLICITANTE] = df[COL_SOLICITANTE].replace('Nan', '')
 
         df.replace(['S/I', 's/i', 'S/D', 's/d'], np.nan, inplace=True)
         return df
@@ -118,8 +117,6 @@ def estandarizar_y_convertir_coord(valor_celda, digitos, log_queue):
         log_queue.put(f"   - ⚠️ Advertencia: No se pudo convertir la coordenada '{valor_celda}'. Se tratará como vacía.")
         return ""
 
-    # --- LÓGICA CORREGIDA ---
-    # Si el número es 0, trátalo como una coordenada vacía y termina aquí.
     if numero == 0:
         return ""
         
@@ -130,7 +127,9 @@ def estandarizar_y_convertir_coord(valor_celda, digitos, log_queue):
             numero_en_metros = numero * 1000
             log_queue.put(f"✅ Coordenada en KM detectada y convertida: {valor_celda}")
 
-    s_final = str(int(round(numero_en_metros, 0)))
+    # Se elimina round() para truncar en vez de redondear. int() por sí solo elimina los decimales.
+    s_final = str(int(numero_en_metros))
+    
     if len(s_final) > digitos:
         return s_final[:digitos]
     else:
