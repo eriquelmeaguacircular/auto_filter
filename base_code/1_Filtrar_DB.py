@@ -164,22 +164,24 @@ def procesar_coordenadas(df: pd.DataFrame, log_queue: queue.Queue) -> pd.DataFra
 def exportar_por_datum(df: pd.DataFrame, log_queue: queue.Queue, carpeta_destino: str):
     log_queue.put("\n🔄 Preparando expedientes para exportación...")
 
-    # --- NUEVA LÓGICA DE FORMATO PARA TODOS LOS EXPEDIENTES ---
-    # 1. Asegurarse de que la columna de expediente sea de tipo string.
+    # --- CONCATENACIÓN DIRECTA ---
+    # 1. Asegurarse de que las columnas clave sean de tipo string.
+    #    La limpieza de espacios extra ya se hizo en la función cargar_datos.
     df[COL_EXPEDIENTE] = df[COL_EXPEDIENTE].astype(str)
-    
-    # 2. Crear un contador progresivo que se reinicia para cada grupo de expedientes idénticos.
-    #    .cumcount() numera las filas dentro de cada grupo (0, 1, 2...). Sumamos 1 para empezar en 1.
-    df['Contador'] = df.groupby(COL_EXPEDIENTE).cumcount() + 1
-    
-    # 3. Aplicar el nuevo formato a TODAS las filas de la columna de expedientes.
-    df[COL_EXPEDIENTE] = df[COL_EXPEDIENTE] + '/' + df['Contador'].astype(str)
+    if COL_SOLICITUD in df.columns:
+        df[COL_SOLICITUD] = df[COL_SOLICITUD].astype(str)
+    else:
+        log_queue.put(f"   - ⚠️ Advertencia: No se encontró la columna '{COL_SOLICITUD}'. No se puede aplicar el formato de solicitud.")
+        # La función continuará, pero el expediente no tendrá el número de solicitud.
+        pass
 
-    log_queue.put("   - Se aplicó el formato 'Expediente/N°' a todos los registros.")
+    # 2. Aplicar el formato "Expediente/N° Solicitud" a TODAS las filas.
+    df[COL_EXPEDIENTE] = df[COL_EXPEDIENTE] + '/' + df[COL_SOLICITUD]
+
+    log_queue.put("   - Se aplicó el formato 'Expediente/N° Solicitud' a todos los registros.")
     # --- FIN DE LA NUEVA LÓGICA ---
 
     log_queue.put("\n🔄 Exportando archivos por Datum...")
-    # Se añade la columna del solicitante para la exportación.
     columnas_a_exportar = [COL_EXPEDIENTE, COL_SOLICITANTE, COL_NORTE, COL_ESTE, COL_DATUM]
     renombrar_columnas = {
         COL_EXPEDIENTE: 'Expediente',
@@ -203,7 +205,6 @@ def exportar_por_datum(df: pd.DataFrame, log_queue: queue.Queue, carpeta_destino
             df_final = pd.concat([df_especifico, df_datum_vacios], ignore_index=True)
 
             if not df_final.empty:
-                # El DataFrame ya tiene la columna Expediente formateada, solo se renombra.
                 df_exportar = df_final[columnas_a_exportar].rename(columns=renombrar_columnas)
                 ruta_salida = os.path.join(carpeta_destino, nombre_archivo)
                 df_exportar.to_csv(ruta_salida, index=False, encoding='utf-8-sig', sep=';')
