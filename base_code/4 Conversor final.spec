@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['4Conversorfinal.py'],
+    ['4_Conversor_final.py'],
     pathex=[],
     binaries=[],
     datas=[],

@@ -7,8 +7,10 @@ import threading
 import queue
 import os
 
-# --- CONFIGURACIÓN DE COLUMNAS (del script original) ---
+# --- CONFIGURACIÓN DE COLUMNAS ---
 COL_EXPEDIENTE = 'Código de \nExpediente'
+COL_SOLICITUD = 'N° \nSolicitud'
+COL_SOLICITANTE = 'Nombre Solicitante'
 COL_COMUNA = 'Comuna'
 COL_TIPO_DERECHO = 'Tipo Derecho'
 COL_NATURALEZA = 'Naturaleza del Agua'
@@ -17,13 +19,30 @@ COL_NORTE = 'UTM \nNorte \nCaptación\n(m)'
 COL_ESTE = 'UTM \nEste \nCaptación\n(m)'
 COL_DATUM = 'Datum'
 
-# --- LÓGICA DE PROCESAMIENTO (del script original) ---
+# --- LÓGICA DE PROCESAMIENTO ---
 def cargar_datos(ruta_archivo: str, log_queue: queue.Queue) -> pd.DataFrame | None:
     log_queue.put(f"🔄 Cargando datos desde '{ruta_archivo}'...")
     try:
         df = pd.read_excel(ruta_archivo, header=6, usecols='A:BP')
         df.columns = df.columns.str.strip()
         log_queue.put("✅ Datos cargados exitosamente.")
+        
+        # --- NUEVA LÓGICA DE LIMPIEZA DE DATOS ---
+        # Limpia espacios en columnas de texto clave.
+        if COL_EXPEDIENTE in df.columns:
+            df[COL_EXPEDIENTE] = df[COL_EXPEDIENTE].astype(str).str.strip()
+        if 'N° \nSolicitud' in df.columns: # Asumiendo el nombre de la columna de solicitud
+            df['N° \nSolicitud'] = df['N° \nSolicitud'].astype(str).str.strip()
+            
+        # Limpia y estandariza mayúsculas/minúsculas en Nombre Solicitante.
+        if COL_SOLICITANTE in df.columns:
+            log_queue.put("   - Estandarizando nombres de solicitantes...")
+            # .str.title() convierte 'JUAN PEREZ' en 'Juan Perez'
+            df[COL_SOLICITANTE] = df[COL_SOLICITANTE].astype(str).str.strip().str.title()
+            # Reemplazar 'Nan' que resulta de celdas vacías
+            df[COL_SOLICITANTE].replace('Nan', '', inplace=True)
+        # --- FIN DE LA NUEVA LÓGICA ---
+
         df.replace(['S/I', 's/i', 'S/D', 's/d'], np.nan, inplace=True)
         return df
     except FileNotFoundError:
@@ -143,33 +162,39 @@ def procesar_coordenadas(df: pd.DataFrame, log_queue: queue.Queue) -> pd.DataFra
     return df_procesado
 
 def exportar_por_datum(df: pd.DataFrame, log_queue: queue.Queue, carpeta_destino: str):
-    log_queue.put(f"\n🔄 Exportando archivos a la carpeta: {carpeta_destino}...")
-    columnas_a_exportar = [COL_EXPEDIENTE, COL_NORTE, COL_ESTE, COL_DATUM]
+    log_queue.put("\n🔄 Preparando expedientes para exportación...")
+
+    # --- NUEVA LÓGICA DE FORMATO PARA TODOS LOS EXPEDIENTES ---
+    # 1. Asegurarse de que la columna de expediente sea de tipo string.
+    df[COL_EXPEDIENTE] = df[COL_EXPEDIENTE].astype(str)
+    
+    # 2. Crear un contador progresivo que se reinicia para cada grupo de expedientes idénticos.
+    #    .cumcount() numera las filas dentro de cada grupo (0, 1, 2...). Sumamos 1 para empezar en 1.
+    df['Contador'] = df.groupby(COL_EXPEDIENTE).cumcount() + 1
+    
+    # 3. Aplicar el nuevo formato a TODAS las filas de la columna de expedientes.
+    df[COL_EXPEDIENTE] = df[COL_EXPEDIENTE] + '/' + df['Contador'].astype(str)
+
+    log_queue.put("   - Se aplicó el formato 'Expediente/N°' a todos los registros.")
+    # --- FIN DE LA NUEVA LÓGICA ---
+
+    log_queue.put("\n🔄 Exportando archivos por Datum...")
+    # Se añade la columna del solicitante para la exportación.
+    columnas_a_exportar = [COL_EXPEDIENTE, COL_SOLICITANTE, COL_NORTE, COL_ESTE, COL_DATUM]
     renombrar_columnas = {
         COL_EXPEDIENTE: 'Expediente',
+        COL_SOLICITANTE: 'Nombre Solicitante',
         COL_NORTE: 'Norte',
         COL_ESTE: 'Este',
         COL_DATUM: 'Datum'
     }
 
-    # --- LÓGICA REFINADA ---
-    # 1. Condición para Datum vacío.
     condicion_datum_vacio = df[COL_DATUM].isna() | (df[COL_DATUM].astype(str).str.strip() == '')
-    
-    # 2. Condición para coordenadas NO vacías (recordar que un '0' se convierte en '').
     condicion_coords_validas = (df[COL_NORTE] != '') & (df[COL_ESTE] != '')
-    
-    # 3. Separar las filas que cumplen AMBAS condiciones: Datum vacío Y coordenadas válidas.
     df_datum_vacios = df[condicion_datum_vacio & condicion_coords_validas]
-
-    # 4. El resto de las filas, que sí tienen un valor en la columna Datum.
     df_con_datum = df[~condicion_datum_vacio]
 
-    datums_a_exportar = {
-        '1956': '1956.csv',
-        '1969': '1969.csv',
-        '1984': '1984.csv'
-    }
+    datums_a_exportar = {'1956': '1956.csv', '1969': '1969.csv', '1984': '1984.csv'}
     
     archivos_generados = 0
     for datum_val, nombre_archivo in datums_a_exportar.items():
@@ -178,6 +203,7 @@ def exportar_por_datum(df: pd.DataFrame, log_queue: queue.Queue, carpeta_destino
             df_final = pd.concat([df_especifico, df_datum_vacios], ignore_index=True)
 
             if not df_final.empty:
+                # El DataFrame ya tiene la columna Expediente formateada, solo se renombra.
                 df_exportar = df_final[columnas_a_exportar].rename(columns=renombrar_columnas)
                 ruta_salida = os.path.join(carpeta_destino, nombre_archivo)
                 df_exportar.to_csv(ruta_salida, index=False, encoding='utf-8-sig', sep=';')
@@ -191,8 +217,6 @@ def exportar_por_datum(df: pd.DataFrame, log_queue: queue.Queue, carpeta_destino
 
     log_queue.put(f"FIN_PROCESO_EXITO:{archivos_generados}")
 
-# --- INTERFAZ GRÁFICA ---
-# --- INTERFAZ GRÁFICA ---
 class App(tk.Tk):
     def __init__(self):
         super().__init__()

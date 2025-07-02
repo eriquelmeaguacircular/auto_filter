@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['31969to1984.py'],
+    ['3_1969_to_1984.py'],
     pathex=[],
     binaries=[],
     datas=[],
